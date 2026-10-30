@@ -1,0 +1,194 @@
+openapi: 3.0.3
+info:
+  title: Amrutam Telemedicine System API
+  description: >
+    Production-grade backend API for Amrutam's Telemedicine System focusing on
+    scalability (100k daily consultations), reliability (99.95% SLA), zero-trust security (MFA, RBAC, encryption),
+    strict idempotency for write actions, and end-to-end observability.
+  version: 1.0.0
+  contact:
+    name: Amrutam Engineering Team
+    url: https://amrutam.co.in
+servers:
+  - url: http://localhost:3000/api/v1
+    description: Local Development Server
+  - url: https://api.telemedicine.amrutam.co.in/api/v1
+    description: Production Environment
+
+tags:
+  - name: Health
+    description: System liveness, readiness, and observability probes
+  - name: Auth
+    description: User authentication, JWT tokens, MFA enrollment & verification
+  - name: Doctors
+    description: Doctor profiles, specialties, and search discovery
+  - name: Availability
+    description: Doctor slot scheduling and real-time availability
+  - name: Consultations
+    description: Booking engine with distributed locking and consultation lifecycle
+  - name: Prescriptions
+    description: Digital medical prescriptions and encrypted clinical notes
+  - name: Admin
+    description: Analytics dashboard and immutable audit logs
+
+paths:
+  /health/liveness:
+    get:
+      tags: [Health]
+      summary: Liveness probe
+      description: Returns 200 OK if the Node.js process is active.
+      responses:
+        '200':
+          description: Service is alive
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: { type: string, example: UP }
+                  uptime: { type: number, example: 345.12 }
+                  timestamp: { type: string, format: date-time }
+
+  /health/readiness:
+    get:
+      tags: [Health]
+      summary: Readiness probe
+      description: Verifies active connections to PostgreSQL and Redis.
+      responses:
+        '200':
+          description: All dependencies ready
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: { type: string, example: READY }
+                  services:
+                    type: object
+                    properties:
+                      database: { type: string, example: UP }
+                      redis: { type: string, example: UP }
+        '503':
+          description: One or more dependencies unavailable
+
+  /auth/register:
+    post:
+      tags: [Auth]
+      summary: Register a new patient or doctor
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email, password, role, firstName, lastName]
+              properties:
+                email: { type: string, format: email, example: patient@example.com }
+                password: { type: string, format: password, example: P@ssword123! }
+                role: { type: string, enum: [PATIENT, DOCTOR], example: PATIENT }
+                firstName: { type: string, example: Rajesh }
+                lastName: { type: string, example: Sharma }
+                phone: { type: string, example: "+919876543210" }
+      responses:
+        '201':
+          description: User registered successfully
+        '400':
+          description: Validation error
+        '409':
+          description: Email already in use
+
+  /auth/login:
+    post:
+      tags: [Auth]
+      summary: User login & token generation
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email, password]
+              properties:
+                email: { type: string, format: email, example: patient@example.com }
+                password: { type: string, example: P@ssword123! }
+                mfaCode: { type: string, example: "123456", description: "Required if MFA is enabled" }
+      responses:
+        '200':
+          description: Authentication successful
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  accessToken: { type: string }
+                  refreshToken: { type: string }
+                  user:
+                    type: object
+                    properties:
+                      id: { type: string, format: uuid }
+                      email: { type: string }
+                      role: { type: string }
+
+  /doctors:
+    get:
+      tags: [Doctors]
+      summary: Search and filter doctors
+      parameters:
+        - in: query
+          name: specialty
+          schema: { type: string }
+          description: Medical specialty (e.g. Ayurveda, Dermatology)
+        - in: query
+          name: maxFee
+          schema: { type: number }
+        - in: query
+          name: minRating
+          schema: { type: number }
+        - in: query
+          name: page
+          schema: { type: integer, default: 1 }
+        - in: query
+          name: limit
+          schema: { type: integer, default: 20 }
+      responses:
+        '200':
+          description: Paginated doctor list
+
+  /consultations/book:
+    post:
+      tags: [Consultations]
+      summary: Book consultation slot (Atomic, Distributed Locked & Idempotent)
+      parameters:
+        - in: header
+          name: Idempotency-Key
+          required: true
+          schema: { type: string, format: uuid }
+          description: Unique client token to guarantee write idempotency
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [slotId, doctorId]
+              properties:
+                slotId: { type: string, format: uuid }
+                doctorId: { type: string, format: uuid }
+                chiefComplaints: { type: string, example: "Chronic joint pain and migraine" }
+      responses:
+        '201':
+          description: Consultation booked successfully
+        '409':
+          description: Slot already booked or lock contention
+        '422':
+          description: Idempotency key mismatch or slot expired
+
+components:
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
